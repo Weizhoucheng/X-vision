@@ -1,0 +1,145 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using VisionInspect.Communication.Modbus;
+using VisionInspect.Communication.Triggers;
+using VisionInspect.Core.Configuration;
+
+internal static class DeviceRegression
+{
+    private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+    public static int Main()
+    {
+        try { Run().GetAwaiter().GetResult(); Console.WriteLine("PASS: 8 device communication regression scenarios"); return 0; }
+        catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+    }
+    private static async Task Run()
+    {
+        await ModbusResponse(false);
+        await ModbusResponse(true);
+        await ModbusTimeout(false);
+        await ModbusTimeout(true);
+        using (var client = new ModbusTcpClient())
+        {
+            bool invalid = false;
+            try { await client.WriteMultipleRegistersAsync(1, 65535, new ushort[] { 1, 2 }, 200, CancellationToken.None); }
+            catch (ArgumentOutOfRangeException) { invalid = true; }
+            Check(invalid, "Register range validation");
+        }
+        await TcpTriggerLifecycle();
+    }
+    private static async Task ModbusResponse(bool invalidProtocol)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Task server = Task.Run(async () =>
+        {
+            using (TcpClient peer = await listener.AcceptTcpClientAsync())
+            using (NetworkStream stream = peer.GetStream())
+            {
+                byte[] request = new byte[17];
+                int offset = 0;
+                while (offset < request.Length)
+                {
+                    int n = await stream.ReadAsync(request, offset, request.Length - offset);
+                    if (n == 0) throw new IOException("Premature request end");
+                    offset += n;
+                }
+                Check(request[7] == 0x10 && request[8] == 0 && request[9] == 100 && request[12] == 4,
+                    "Write request frame");
+                byte[] response = { request[0], request[1], 0, (byte)(invalidProtocol ? 1 : 0), 0, 6, 1, 0x10, 0, 100, 0, 2 };
+                foreach (byte value in response) await stream.WriteAsync(new[] { value }, 0, 1);
+            }
+        });
+        try
+        {
+            using (var client = new ModbusTcpClient())
+            {
+                await client.ConnectAsync("127.0.0.1", port, 1000, CancellationToken.None);
+                bool rejected = false;
+                try { await client.WriteMultipleRegistersAsync(1, 100, new ushort[] { 1, 2 }, 1000, CancellationToken.None); }
+                catch (IOException) { rejected = true; }
+                Check(rejected == invalidProtocol, "MBAP protocol validation / segmented response");
+            }
+            await server;
+        }
+        finally { listener.Stop(); }
+    }
+    private static async Task ModbusTimeout(bool userCancel)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        TcpClient peer = null;
+        Task accept = Task.Run(async () => { peer = await listener.AcceptTcpClientAsync(); });
+        try
+        {
+            using (var client = new ModbusTcpClient())
+            using (var cts = new CancellationTokenSource())
+            {
+                await client.ConnectAsync("127.0.0.1", port, 1000, CancellationToken.None);
+                await accept;
+                if (userCancel) cts.CancelAfter(100);
+                Stopwatch watch = Stopwatch.StartNew();
+                bool expected = false;
+                try { await client.WriteMultipleRegistersAsync(1, 100, new ushort[] { 1, 2 }, userCancel ? 5000 : 250, cts.Token); }
+                catch (TimeoutException) { expected = !userCancel; }
+                catch (OperationCanceledException) { expected = userCancel; }
+                Check(expected && watch.ElapsedMilliseconds < 1500 && !client.IsConnected,
+                    "Hung network read cancellation must close the connection");
+            }
+        }
+        finally { if (peer != null) peer.Close(); listener.Stop(); }
+    }
+    private static async Task TcpTriggerLifecycle()
+    {
+        var reservation = new TcpListener(IPAddress.Loopback, 0);
+        reservation.Start();
+        int port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+        var settings = new TcpTriggerSettings { Enabled = true, BindAddress = "127.0.0.1", ListenPort = port };
+        using (var source = new TcpTriggerSource(settings, null))
+        {
+            int received = 0;
+            source.Triggered += (s, e) => Interlocked.Increment(ref received);
+            await source.StartAsync(CancellationToken.None);
+            using (var peer = new TcpClient())
+            {
+                await peer.ConnectAsync("127.0.0.1", port);
+                NetworkStream stream = peer.GetStream();
+                byte[] first = Encoding.ASCII.GetBytes("TR");
+                byte[] second = Encoding.ASCII.GetBytes("IG\nTRIG\n");
+                await stream.WriteAsync(first, 0, first.Length);
+                await stream.WriteAsync(second, 0, second.Length);
+                for (int i = 0; i < 100 && received < 2; i++) await Task.Delay(10);
+                Check(received == 2, "Fragmented/coalesced triggers");
+                byte[] oversized = Enumerable.Repeat((byte)'X', 4097).ToArray();
+                await stream.WriteAsync(oversized, 0, oversized.Length);
+                await Task.Delay(100);
+            }
+            for (int i = 0; i < 30; i++)
+            {
+                using (var peer = new TcpClient()) { await peer.ConnectAsync("127.0.0.1", port); }
+            }
+            await Task.Delay(100);
+            object clients = typeof(TcpTriggerSource).GetField("_clients", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(source);
+            int count = (int)clients.GetType().GetProperty("Count").GetValue(clients, null);
+            Check(count == 0, "Closed clients must be removed");
+            using (var idle = new TcpClient())
+            {
+                await idle.ConnectAsync("127.0.0.1", port);
+                Stopwatch watch = Stopwatch.StartNew();
+                await source.StopAsync();
+                Check(watch.ElapsedMilliseconds < 1500, "Stop must drain blocked client reads");
+            }
+        }
+    }
+}

@@ -1,0 +1,44 @@
+# Build and generated verification outputs
+**/bin/
+**/obj/
+.vs/
+packages/
+artifacts/
+publish/
+testruntime/
+*.user
+*.suo
+*.cache
+*.log
+*.dll
+*.exe
+*.pdb
+*.zip
+*.7z
+*.msi
+*.msix
+# Site data, recipes, authentication and licensing
+Data/
+Logs/
+Reports/
+Backups/
+config/appsettings.json
+**/users.json
+**/params/
+*.sol
+*.lic
+*.license
+*.c2d
+*.d2c
+*.c2v
+*.v2c
+*.pem
+*.key
+*.pfx
+.env
+.env.*
+!.env.example
+# Personal application documents belong outside this repository
+*.pdf
+*.docx
+*.doc

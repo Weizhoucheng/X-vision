@@ -1,0 +1,21 @@
+name: Core and communication regression
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check repository contents
+        shell: pwsh
+        run: ./scripts/Check-Repository.ps1
+      - name: Core regression without VM SDK
+        shell: powershell
+        run: ./scripts/Test-Core.ps1 -Configuration Release
+      - name: Loopback communication regression
+        shell: powershell
+        run: ./src/VisionInspect.Communication/Tests/Run-Regression.ps1 -Configuration Release

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <!--
+    统一构建参数。
+    VisionMasterRoot / MvsSdkDir 可以在命令行覆盖，也可以在 VS 的“属性管理器”中设置：
+      msbuild VisionInspect.sln /p:Platform=x64 /p:VisionMasterRoot="D:\Program Files\VisionMaster4.3.0"
+  -->
+  <PropertyGroup>
+    <LangVersion>7.3</LangVersion>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <VisionMasterRoot Condition="'$(VisionMasterRoot)' == '' and '$(VISIONMASTER_ROOT)' != ''">$(VISIONMASTER_ROOT)</VisionMasterRoot>
+    <VisionMasterRoot Condition="'$(VisionMasterRoot)' == '' and !Exists('C:\Program Files\VisionMaster4.3.0') and Exists('D:\Program Files\VisionMaster4.3.0')">D:\Program Files\VisionMaster4.3.0</VisionMasterRoot>
+    <VisionMasterRoot Condition="'$(VisionMasterRoot)' == ''">C:\Program Files\VisionMaster4.3.0</VisionMasterRoot>
+    <VmSdkAssemblyDir>$(VisionMasterRoot)\Development\V4.x\ComControls\Assembly</VmSdkAssemblyDir>
+
+    <MvsSdkDir Condition="'$(MvsSdkDir)' == '' and '$(MVS_SDK_DIR)' != ''">$(MVS_SDK_DIR)</MvsSdkDir>
+    <MvsSdkDir Condition="'$(MvsSdkDir)' == ''">C:\Program Files (x86)\MVDAlgorithmSDK\ReferencedAssemblies</MvsSdkDir>
+
+    <!--
+      兼容两种 MVS 安装布局：
+      1) ReferencedAssemblies\Algorithms + ReferencedAssemblies\Common（MVDAlgorithmSDK 默认）
+      2) MVS\Development\DotNet\AnyCpu 下的三个 DLL 放在同一目录
+    -->
+    <MvsCameraDir Condition="'$(MvsCameraDir)' == '' and Exists('$(MvsSdkDir)\MvCameraControl.Net.dll')">$(MvsSdkDir)</MvsCameraDir>
+    <MvsCameraDir Condition="'$(MvsCameraDir)' == ''">$(MvsSdkDir)\Algorithms</MvsCameraDir>
+    <MvsCommonDir Condition="'$(MvsCommonDir)' == '' and Exists('$(MvsSdkDir)\MVDCore.Net.dll')">$(MvsSdkDir)</MvsCommonDir>
+    <MvsCommonDir Condition="'$(MvsCommonDir)' == ''">$(MvsSdkDir)\Common</MvsCommonDir>
+  </PropertyGroup>
+</Project>

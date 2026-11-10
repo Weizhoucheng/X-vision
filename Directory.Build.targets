@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <!-- 在项目属性求值后验证，避免错误命令行参数绕过 x64 / .NET 4.7.2 约束。 -->
+  <Target Name="ValidateIndustrialBuildPlatform" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(Platform)' != 'x64' or '$(PlatformTarget)' != 'x64'"
+           Text="VisionInspect 强制使用 x64。请指定 /p:Platform=x64，不支持 AnyCPU 或 x86。" />
+    <Error Condition="'$(TargetFrameworkVersion)' != 'v4.7.2'"
+           Text="VisionInspect 的目标框架必须为 .NET Framework 4.7.2。" />
+    <Error Condition="'$(Prefer32Bit)' == 'true'"
+           Text="VisionInspect 不允许启用 Prefer32Bit。" />
+  </Target>
+</Project>
